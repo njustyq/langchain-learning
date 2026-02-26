@@ -1,0 +1,28 @@
+{
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "python.analysis.extraPaths": [
+    "/Users/yangqing/Library/Python/3.9/lib/python/site-packages"
+  ],
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.autoImportCompletions": true,
+  "python.analysis.diagnosticMode": "workspace",
+  "python.languageServer": "Pylance",
+  "python.analysis.indexing": true,
+  "python.analysis.packageIndexDepths": [
+    {
+      "name": "langchain",
+      "depth": 10,
+      "includeAllSymbols": true
+    },
+    {
+      "name": "langchain_openai",
+      "depth": 10,
+      "includeAllSymbols": true
+    },
+    {
+      "name": "langchain_core",
+      "depth": 10,
+      "includeAllSymbols": true
+    }
+  ]
+}
