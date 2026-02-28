@@ -1,5 +1,5 @@
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter  # pyright: ignore[reportMissingImports]
+from langchain_core.documents import Document  # pyright: ignore[reportMissingImports]
 from typing import List
 
 class SmartTextSplitter:
@@ -44,7 +44,7 @@ class SmartTextSplitter:
         for i, chunk in enumerate(chunks):
             chunk.metadata["chunk_id"] = i
         
-        print(f"✂️  文档已切分为 {len(chunks)} 个块")
+        print(f"[切分] 文档已切分为 {len(chunks)} 个块")
         self._print_statistics(chunks)
         
         return chunks
@@ -58,7 +58,7 @@ class SmartTextSplitter:
         print(f"   最长：{max(lengths)} 字符")
         
         # 显示前3个块的预览
-        print(f"\n📄 前3个块预览：")
+        print(f"\n[预览] 前3个块预览：")
         for i, chunk in enumerate(chunks[:3]):
             print(f"\n--- Chunk {i} ---")
             print(f"来源：{chunk.metadata.get('source', 'unknown')}")
@@ -73,5 +73,5 @@ if __name__ == "__main__":
     documents = loader.load_directory()
     
     # 切分文档
-    splitter = SmartTextSplitter(chunk_size=300, chunk_overlap=50)
+    splitter = SmartTextSplitter(chunk_size=100, chunk_overlap=10)
     chunks = splitter.split_documents(documents)

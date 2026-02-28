@@ -1,9 +1,18 @@
 import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.memory import ConversationSummaryBufferMemory
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage
+
+# 尝试导入 ConversationSummaryBufferMemory（新版本可能已移除）
+try:
+    from langchain.memory import ConversationSummaryBufferMemory
+except ImportError:
+    try:
+        from langchain_community.memory import ConversationSummaryBufferMemory
+    except ImportError:
+        # 如果都找不到，创建一个占位符类
+        ConversationSummaryBufferMemory = None
 
 # 在模块导入时即执行，确保所有 import 本文件的地方都自动加载环境变量和配置
 def _ensure_env_loaded():
@@ -151,13 +160,29 @@ class LLMWithTokenCounter(ChatOpenAI):
         # 添加一些额外的 token 用于消息格式（role, 分隔符等）
         return total_chars + len(messages) * 3
 
+def createRAGPrompt():
+    return ChatPromptTemplate.from_messages([
+            ("system", """你是一个专业的文档问答助手。请根据提供的上下文回答用户问题。
+
+重要规则：
+1. 只根据提供的上下文回答，不要编造信息
+2. 如果上下文中没有相关信息，明确说明"根据提供的文档，我无法回答这个问题"
+3. 回答要准确、简洁
+4. 如果可能，引用文档来源
+
+上下文：
+{context}
+"""),
+            ("human", "{question}")
+        ])
+        
 def createSmartTranslatorMemory():
     # 使用包装后的 LLM，提供 token 计数功能
     llm_with_counter = LLMWithTokenCounter(
         model="MaaS 3.7 Sonnet", 
         temperature=0
     )
-    return ConversationSummaryBufferMemory(
+    return ConversationSummaryBufferMemory(  # pyright: ignore[reportOptionalCall]
         llm=llm_with_counter,
         max_token_limit=500,  # 超过500 tokens时自动总结
         return_messages=True,

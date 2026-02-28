@@ -1,0 +1,16 @@
+# 基础依赖（必需）
+langchain-chroma
+langchain-core
+python-dotenv
+
+# === 选择一个 Embedding 方案 ===
+
+# 方案1: HuggingFace（推荐，免费）
+langchain-huggingface
+sentence-transformers
+
+# 方案2: Ollama（需要先安装 Ollama）
+# langchain-ollama
+
+# 方案3: OpenAI（需要 API key）
+# langchain-openai
