@@ -1,9 +1,9 @@
-from langchain_community.document_loaders import (  # pyright: ignore[reportMissingImports]
+from langchain_community.document_loaders import (  
     TextLoader,
     PyPDFLoader,
     DirectoryLoader
 )
-from langchain_core.documents import Document  # pyright: ignore[reportMissingImports]
+from langchain_core.documents import Document 
 from pathlib import Path
 from typing import List
 import os

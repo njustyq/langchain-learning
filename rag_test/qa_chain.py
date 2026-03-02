@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import List, Dict
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import JsonOutputParser
 from vectorizer import VectorStoreManager
+from pydantic import BaseModel, Field
 
 # 动态导入 langchain-test 目录中的模块（目录名带连字符，不能直接导入）
 parent_dir = Path(__file__).parent.parent
@@ -108,6 +110,132 @@ class RAGQASystem:
             "answer": answer,
             "sources": sources
         }
+
+    def ask_with_confidence(self, question: str, min_score: float = 0.7) -> Dict:
+        """带置信度筛选的提问"""
+        # 获取带分数的检索结果
+        results = self.vector_manager.vectorstore.similarity_search_with_score(
+            question, k=5
+        )
+        
+        # 筛选高相关度的文档
+        filtered_docs = [
+            doc for doc, score in results if score < min_score  # 注意：分数越小越相似
+        ]
+        
+        if not filtered_docs:
+            return {
+                "question": question,
+                "answer": "抱歉，我在文档中没有找到足够相关的信息来回答这个问题。",
+                "confidence": "low",
+                "sources": []
+            }
+        
+        # 格式化上下文
+        context = self._format_docs(filtered_docs)
+        
+        # 生成答案
+        answer = self.chain.invoke(question)
+        
+        confidence = "high" if len(filtered_docs) >= 3 else "medium"
+        
+        return {
+            "question": question,
+            "answer": answer,
+            "confidence": confidence,
+            "sources": [
+                {
+                    "source": doc.metadata.get('source'),
+                    "content": doc.page_content,
+                    "score": score
+                }
+                for doc, score in results[:len(filtered_docs)]
+            ]
+        }
+
+class RelevanceScore(BaseModel):
+    """相关性评分"""
+    chunk_id: int = Field(description="文档块ID")
+    score: int = Field(description="相关性评分 1-10")
+    reason: str = Field(description="评分理由")
+
+class ReRanker:
+    """文档重排序器"""
+    
+    def __init__(self):
+        self.llm = baseDef.createLlm()
+        self.parser = JsonOutputParser(pydantic_object=RelevanceScore)
+        self.prompt = baseDef.createRAGPromptWithReranking()        
+
+    def rerank(self, question: str, documents: List) -> List:
+        """对文档进行重排序"""
+        scored_docs = []
+        
+        print(f"\n🔄 正在对 {len(documents)} 个文档进行重排序...")
+        
+        for i, doc in enumerate(documents):
+            try:
+                result = (self.prompt | self.llm | self.parser).invoke({
+                    "question": question,
+                    "document": doc.page_content[:500],  # 只取前500字符
+                    "format_instructions": self.parser.get_format_instructions()
+                })
+                
+                scored_docs.append({
+                    "doc": doc,
+                    "score": result["score"],
+                    "reason": result["reason"]
+                })
+                
+                print(f"  文档 {i+1}: {result['score']}/10 - {result['reason'][:50]}...")
+                
+            except Exception as e:
+                print(f"  文档 {i+1}: 评分失败 - {e}")
+                scored_docs.append({
+                    "doc": doc,
+                    "score": 5,  # 默认中等分数
+                    "reason": "评分失败"
+                })
+        
+        # 按分数降序排序
+        scored_docs.sort(key=lambda x: x["score"], reverse=True)
+        
+        print(f"✅ 重排序完成\n")
+        
+        return [item["doc"] for item in scored_docs]
+
+class RAGWithReranking(RAGQASystem):
+    """带重排序的 RAG 系统"""
+    
+    def __init__(self, vector_manager: VectorStoreManager):
+        super().__init__(vector_manager)
+        self.reranker = ReRanker()
+    
+    def ask(self, question: str, use_reranking: bool = True) -> str:
+        """提问（可选重排序）"""
+        print(f"\n💬 问题: {question}")
+        print("🔍 正在检索相关文档...")
+        
+        # 初始检索（多检索一些）
+        docs = self.retriever.get_relevant_documents(question)
+        print(f"📚 初步检索到 {len(docs)} 个文档片段")
+        
+        # 重排序
+        if use_reranking:
+            docs = self.reranker.rerank(question, docs)
+            docs = docs[:3]  # 只保留前3个
+        
+        # 格式化上下文
+        context = self._format_docs(docs)
+        
+        # 生成答案
+        print("🤖 正在生成答案...\n")
+        answer = self.chain.invoke({
+            "context": context,
+            "question": question
+        })
+        
+        return answer
 
 # 测试
 if __name__ == "__main__":
