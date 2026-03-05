@@ -2,9 +2,10 @@ import sys
 import importlib.util
 from pathlib import Path
 from typing import List, Dict
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.output_parsers import PydanticOutputParser
 from vectorizer import VectorStoreManager
 from pydantic import BaseModel, Field
 
@@ -50,17 +51,36 @@ class RAGQASystem:
         
         # 创建 Prompt
         self.prompt = createRAGPrompt()
+
+        # 创建重排序器
+        self.reranker = ReRanker()
         
-        # 构建 RAG Chain
+        # 构建带 Reranker 的 RAG Chain（LCEL）
+        #
+        # 数据流：
+        #   question (str)
+        #     → Step 1 (RunnableLambda): 检索原始候选文档
+        #         输出: {"question": str, "docs": List[Document]}
+        #     → Step 2 (RunnableLambda): 用 LLM reranker 对文档重排序，格式化为上下文字符串
+        #         输出: {"question": str, "context": str}
+        #     → self.prompt → self.llm → StrOutputParser
+        #         输出: 最终答案 (str)
         self.chain = (
-            {
-                "context": self.retriever | self._format_docs,
-                "question": RunnablePassthrough()
-            }
+            RunnableLambda(lambda q: {
+                "question": q,
+                "docs": self.retriever.invoke(q)
+            })
+            | RunnableLambda(lambda x: {
+                "question": x["question"],
+                "context": self._format_docs(
+                    self.reranker.rerank(x["question"], x["docs"])
+                )
+            })
             | self.prompt
             | self.llm
             | StrOutputParser()
         )
+      
     
     def _format_docs(self, docs: List) -> str:
         """格式化检索到的文档"""
@@ -171,7 +191,7 @@ class ReRanker:
         """对文档进行重排序"""
         scored_docs = []
         
-        print(f"\n🔄 正在对 {len(documents)} 个文档进行重排序...")
+        print(f"\n[Reranker] 正在对 {len(documents)} 个文档进行重排序...")
         
         for i, doc in enumerate(documents):
             try:
@@ -200,7 +220,7 @@ class ReRanker:
         # 按分数降序排序
         scored_docs.sort(key=lambda x: x["score"], reverse=True)
         
-        print(f"✅ 重排序完成\n")
+        print(f"[Reranker] 重排序完成\n")
         
         return [item["doc"] for item in scored_docs]
 
@@ -213,12 +233,12 @@ class RAGWithReranking(RAGQASystem):
     
     def ask(self, question: str, use_reranking: bool = True) -> str:
         """提问（可选重排序）"""
-        print(f"\n💬 问题: {question}")
-        print("🔍 正在检索相关文档...")
+        print(f"\n[问题] {question}")
+        print("[检索] 正在检索相关文档...")
         
-        # 初始检索（多检索一些）
-        docs = self.retriever.get_relevant_documents(question)
-        print(f"📚 初步检索到 {len(docs)} 个文档片段")
+        # 初始检索
+        docs = self.retriever.invoke(question)
+        print(f"[检索] 初步检索到 {len(docs)} 个文档片段")
         
         # 重排序
         if use_reranking:
@@ -228,9 +248,9 @@ class RAGWithReranking(RAGQASystem):
         # 格式化上下文
         context = self._format_docs(docs)
         
-        # 生成答案
-        print("🤖 正在生成答案...\n")
-        answer = self.chain.invoke({
+        # 直接调用 prompt → llm → parser，避免再次触发 chain 内部的检索+重排序
+        print("[生成] 正在生成答案...\n")
+        answer = (self.prompt | self.llm | StrOutputParser()).invoke({
             "context": context,
             "question": question
         })

@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder,PromptTemplate
 from langchain_core.messages import BaseMessage
 
 # 尝试导入 ConversationSummaryBufferMemory（新版本可能已移除）
@@ -22,6 +22,37 @@ def _ensure_env_loaded():
 
 _ensure_env_loaded()
 
+class LLMWithTokenCounter(ChatOpenAI):
+    """包装 ChatOpenAI 以提供 token 计数功能"""
+    def get_num_tokens_from_messages(self, messages):
+        """
+        估算消息的 token 数量
+        使用简单的字符数估算方法（约 4 个字符 = 1 token）
+        对于中文，约 1.5 个字符 = 1 token
+        """
+        total_chars = 0
+        for message in messages:
+            if hasattr(message, 'content'):
+                content = message.content
+                if isinstance(content, str):
+                    # 简单估算：中文字符按 1.5 字符/token，其他按 4 字符/token
+                    chinese_chars = sum(1 for c in content if '\u4e00' <= c <= '\u9fff')
+                    other_chars = len(content) - chinese_chars
+                    # 估算 token 数
+                    estimated_tokens = int(chinese_chars / 1.5 + other_chars / 4)
+                    total_chars += estimated_tokens
+                elif isinstance(content, list):
+                    # 处理内容为列表的情况（如包含图片等）
+                    for item in content:
+                        if isinstance(item, dict) and 'text' in item:
+                            text = item['text']
+                            chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+                            other_chars = len(text) - chinese_chars
+                            estimated_tokens = int(chinese_chars / 1.5 + other_chars / 4)
+                            total_chars += estimated_tokens
+        # 添加一些额外的 token 用于消息格式（role, 分隔符等）
+        return total_chars + len(messages) * 3
+        
 def createLlm():
        return ChatOpenAI(model="MaaS 3.7 Sonnet", temperature=0)   
 
@@ -114,7 +145,6 @@ def createTranslatorWithMemoryPrompt():
     ("human", "{input}")
 ])
 
-
 def createSmartTranslatorPrompt():
     return ChatPromptTemplate.from_messages([
     ("system", """你是高级翻译助手，具备以下能力：
@@ -129,36 +159,7 @@ def createSmartTranslatorPrompt():
     ("human", "{input}")
 ])
 
-class LLMWithTokenCounter(ChatOpenAI):
-    """包装 ChatOpenAI 以提供 token 计数功能"""
-    def get_num_tokens_from_messages(self, messages):
-        """
-        估算消息的 token 数量
-        使用简单的字符数估算方法（约 4 个字符 = 1 token）
-        对于中文，约 1.5 个字符 = 1 token
-        """
-        total_chars = 0
-        for message in messages:
-            if hasattr(message, 'content'):
-                content = message.content
-                if isinstance(content, str):
-                    # 简单估算：中文字符按 1.5 字符/token，其他按 4 字符/token
-                    chinese_chars = sum(1 for c in content if '\u4e00' <= c <= '\u9fff')
-                    other_chars = len(content) - chinese_chars
-                    # 估算 token 数
-                    estimated_tokens = int(chinese_chars / 1.5 + other_chars / 4)
-                    total_chars += estimated_tokens
-                elif isinstance(content, list):
-                    # 处理内容为列表的情况（如包含图片等）
-                    for item in content:
-                        if isinstance(item, dict) and 'text' in item:
-                            text = item['text']
-                            chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-                            other_chars = len(text) - chinese_chars
-                            estimated_tokens = int(chinese_chars / 1.5 + other_chars / 4)
-                            total_chars += estimated_tokens
-        # 添加一些额外的 token 用于消息格式（role, 分隔符等）
-        return total_chars + len(messages) * 3
+
 
 def createRAGPrompt():
     return ChatPromptTemplate.from_messages([
@@ -175,6 +176,50 @@ def createRAGPrompt():
 """),
             ("human", "{question}")
         ])
+
+def createRAGPromptWithReranking():
+    """用于重排序的评分 Prompt：让 LLM 对文档与问题的相关性打分"""
+    return ChatPromptTemplate.from_messages([
+        ("system", """你是一个文档相关性评估专家。请评估给定文档与问题的相关性，并严格按照以下JSON格式输出，不要包含任何多余内容。
+
+{format_instructions}
+"""),
+        ("human", """问题：{question}
+
+文档内容：
+{document}
+
+请评估该文档与问题的相关性，给出1-10分的评分（10分最相关，1分最不相关）。
+chunk_id 固定填 0。
+""")
+    ])
+
+def createAgentToolsPrompt():
+    return PromptTemplate.from_template("""
+你是一个智能助手，可以使用以下工具来回答问题：
+
+{tools}
+
+工具使用格式：
+Thought: 我需要思考如何回答这个问题     
+Action: 工具名称 
+Action Input: 工具的输入参数 
+Observation: 工具返回的结果 
+... (可以重复 Thought/Action/Action Input/Observation 多次，直到得到最终答案) 
+Thought: 我现在知道最终答案了 
+Final Answer: 最终答案
+
+重要规则：
+1. 仔细阅读每个工具的描述，选择最合适的工具
+2. 严格按照工具要求的输入格式提供参数
+3. 如果一个工具返回错误，尝试调整输入或使用其他工具
+4. 综合多个工具的结果来回答复杂问题
+5. 必须使用 "Final Answer:" 来给出最终答案
+
+{agent_scratchpad}
+
+问题: {input}
+""")
         
 def createSmartTranslatorMemory():
     # 使用包装后的 LLM，提供 token 计数功能
