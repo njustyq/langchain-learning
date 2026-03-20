@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder,PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage
 
 # 尝试导入 ConversationSummaryBufferMemory（新版本可能已移除）
@@ -195,31 +195,35 @@ chunk_id 固定填 0。
     ])
 
 def createAgentToolsPrompt():
-    return PromptTemplate.from_template("""
-你是一个智能助手，可以使用以下工具来回答问题：
+    """
+    创建 Tool Calling Agent 专用的 ChatPromptTemplate。
 
-{tools}
+    与旧版 PromptTemplate（手动 ReAct 文本解析）的核心区别：
+    - 旧版：模型输出 "Action: xxx / Action Input: xxx" 文本，需代码手动解析，容易出错
+    - 新版：模型通过原生 Function Calling 以结构化 JSON 声明工具调用，由 AgentExecutor 自动处理
 
-工具使用格式：
-Thought: 我需要思考如何回答这个问题     
-Action: 工具名称 
-Action Input: 工具的输入参数 
-Observation: 工具返回的结果 
-... (可以重复 Thought/Action/Action Input/Observation 多次，直到得到最终答案) 
-Thought: 我现在知道最终答案了 
-Final Answer: 最终答案
+    Prompt 结构说明：
+    - system       : 赋予 Agent 角色与工作原则
+    - chat_history : 可选，多轮对话历史（optional=True，由 RunnableWithMessageHistory 注入）
+    - human        : 当前用户输入
+    - agent_scratchpad: 必须，AgentExecutor 将每轮工具调用/结果写入此处，形成推理上下文
+    """
+    return ChatPromptTemplate.from_messages([
+        (
+            "system",
+            """你是一个强大的智能助手，可以借助工具解决各种问题。
 
-重要规则：
-1. 仔细阅读每个工具的描述，选择最合适的工具
-2. 严格按照工具要求的输入格式提供参数
-3. 如果一个工具返回错误，尝试调整输入或使用其他工具
-4. 综合多个工具的结果来回答复杂问题
-5. 必须使用 "Final Answer:" 来给出最终答案
-
-{agent_scratchpad}
-
-问题: {input}
-""")
+工作原则：
+1. 仔细理解用户的问题，判断是否需要调用工具
+2. 选择最合适的工具，并提供准确的参数
+3. 综合多次工具调用的结果来回答复杂问题
+4. 如果可以直接回答，无需调用工具
+5. 始终用中文回复用户""",
+        ),
+        MessagesPlaceholder(variable_name="chat_history", optional=True),
+        ("human", "{input}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad"),
+    ])
         
 def createSmartTranslatorMemory():
     # 使用包装后的 LLM，提供 token 计数功能
